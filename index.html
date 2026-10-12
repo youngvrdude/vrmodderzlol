@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GTag ID Grabber</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<!-- JSZip for APK unpacking -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg:       #0D1117;
+    --panel:    #161B22;
+    --border:   #21282F;
+    --border-hi:#2D3A47;
+    --text:     #C9D1D9;
+    --muted:    #6E7681;
+    --cyan:     #58D9F9;
+    --amber:    #E3A444;
+    --green:    #3FB950;
+    --red:      #F85149;
+    --white:    #F0F6FC;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  *, *::before, *::after { box-sizing: inherit; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'JetBrains Mono','Courier New',monospace; font-size: 13px; line-height: 1.6; }
+  body { display: flex; flex-direction: column; min-height: 100%; }
+
+  header { padding: 16px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .logo { font-size: 14px; font-weight: 700; color: var(--cyan); letter-spacing: .04em; }
+  .logo span { color: var(--muted); font-weight: 300; }
+  .badge { font-size: 10px; font-weight: 500; color: var(--muted); border: 1px solid var(--border-hi); padding: 1px 7px; border-radius: 2px; letter-spacing: .06em; }
+
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; }
+
+  /* drop zone */
+  #drop-area { grid-column: 1/-1; border-bottom: 1px solid var(--border); padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+  .drop-label { font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+  .drop-target { width: 100%; max-width: 700px; border: 1px dashed var(--border-hi); border-radius: 4px; padding: 26px 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; cursor: pointer; transition: border-color .15s, background .15s; background: transparent; position: relative; }
+  .drop-target:hover, .drop-target.drag-over { border-color: var(--cyan); background: rgba(88,217,249,.04); }
+  .drop-target input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-icon { width: 34px; height: 34px; color: var(--muted); }
+  .drop-main { font-size: 13px; color: var(--text); }
+  .drop-main strong { color: var(--cyan); font-weight: 500; }
+  .drop-sub { font-size: 11px; color: var(--muted); text-align: center; }
+
+  /* chips */
+  #file-list { display: flex; flex-wrap: wrap; gap: 8px; max-width: 700px; }
+  .chip { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border-hi); border-radius: 3px; padding: 3px 10px 3px 8px; font-size: 11px; color: var(--text); }
+  .chip-type { font-size: 9px; padding: 1px 5px; border-radius: 2px; font-weight: 700; letter-spacing: .04em; }
+  .chip-type.apk { background: rgba(88,217,249,.15); color: var(--cyan); }
+  .chip-type.dll { background: rgba(63,185,80,.15); color: var(--green); }
+  .chip-type.cs  { background: rgba(227,164,68,.15); color: var(--amber); }
+  .chip-type.folder { background: rgba(248,81,73,.12); color: var(--red); }
+  .chip-remove { color: var(--muted); cursor: pointer; font-size: 14px; background: none; border: none; padding: 0; font-family: inherit; line-height: 1; }
+  .chip-remove:hover { color: var(--red); }
+
+  /* controls */
+  .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #scan-btn { font-family: 'JetBrains Mono',monospace; font-size: 12px; font-weight: 500; background: var(--cyan); color: var(--bg); border: none; border-radius: 3px; padding: 8px 22px; cursor: pointer; letter-spacing: .04em; transition: opacity .15s; }
+  #scan-btn:disabled { opacity: .35; cursor: default; }
+  #scan-btn:not(:disabled):hover { opacity: .85; }
+  #clear-btn { font-family: 'JetBrains Mono',monospace; font-size: 11px; background: none; color: var(--muted); border: 1px solid var(--border-hi); border-radius: 3px; padding: 7px 14px; cursor: pointer; }
+  #clear-btn:hover { color: var(--text); border-color: var(--text); }
+
+  /* progress */
+  #progress-wrap { display: none; height: 2px; background: var(--border); grid-column: 1/-1; }
+  #progress-bar { height: 100%; background: var(--cyan); width: 0%; transition: width .1s; }
+
+  /* panels */
+  .panel { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; min-height: 300px; }
+  .panel:last-child { border-right: none; }
+  .panel-head { padding: 10px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .panel-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--muted); }
+  .count-badge { font-size: 10px; padding: 1px 7px; border-radius: 10px; background: var(--border-hi); color: var(--muted); }
+  .count-badge.has-results { background: rgba(88,217,249,.15); color: var(--cyan); }
+  .panel-body { flex: 1; overflow-y: auto; padding: 14px 20px; scrollbar-width: thin; scrollbar-color: var(--border-hi) transparent; }
+
+  /* result cards */
+  .result-card { border: 1px solid var(--border); border-radius: 3px; padding: 12px 14px; margin-bottom: 10px; }
+  .result-card:last-child { margin-bottom: 0; }
+  .result-source { font-size: 10px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+  .result-source .src-tag { font-size: 9px; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 2px; margin-right: 6px; }
+  .src-tag.apk { background: rgba(88,217,249,.15); color: var(--cyan); }
+  .src-tag.dll { background: rgba(63,185,80,.15); color: var(--green); }
+  .src-tag.cs  { background: rgba(227,164,68,.15); color: var(--amber); }
+
+  .id-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .id-row:last-child { border-bottom: none; }
+  .id-label { font-size: 10px; color: var(--muted); flex-shrink: 0; width: 130px; }
+  .id-value { font-size: 12px; font-weight: 500; word-break: break-all; flex: 1; }
+  .id-value.realtime { color: var(--cyan); }
+  .id-value.voice    { color: var(--green); }
+  .id-value.playfab  { color: var(--amber); }
+  .id-value.notfound { color: var(--muted); font-style: italic; font-size: 11px; }
+  .copy-btn { font-family: 'JetBrains Mono',monospace; font-size: 9px; background: var(--border-hi); color: var(--text); border: none; border-radius: 2px; padding: 2px 7px; cursor: pointer; flex-shrink: 0; }
+  .copy-btn:hover { color: var(--cyan); }
+  .copy-btn.copied { color: var(--green); }
+
+  /* log */
+  #log-output { font-size: 11px; line-height: 1.9; color: var(--muted); }
+  .log-line { display: block; }
+  .log-line.info { color: var(--muted); }
+  .log-line.ok   { color: var(--green); }
+  .log-line.warn { color: var(--amber); }
+  .log-line.hit  { color: var(--cyan); }
+  .log-line.err  { color: var(--red); }
+
+  .empty { color: var(--muted); font-size: 11px; padding-top: 4px; }
+
+  footer { border-top: 1px solid var(--border); padding: 9px 28px; font-size: 10px; color: var(--muted); display: flex; gap: 24px; flex-wrap: wrap; }
+
+  @media (max-width: 680px) {
+    main { grid-template-columns: 1fr; }
+    .panel { border-right: none; border-bottom: 1px solid var(--border); min-height: 220px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">GTAG <span>/</span> ID GRABBER</span>
+  <span class="badge">2021.3 · 2022.3 · MONO</span>
+  <span class="badge">PlayfabAuthenticator</span>
+</header>
+
+<main>
+  <section id="drop-area">
+    <div class="drop-label">INPUT — APK FILE OR DECOMPILED FOLDER CONTENTS</div>
+
+    <div class="drop-target" id="drop-target">
+      <input type="file" id="file-input" multiple accept=".apk,.dll,.cs,.java,.smali,.txt,.json,.xml">
+      <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M16 10l-4-4m0 0L8 10m4-4v12"/>
+      </svg>
+      <div class="drop-main"><strong>Drop APK</strong> or <strong>decompiled folder files</strong></div>
+      <div class="drop-sub">APK → auto-unpacked · Assembly-CSharp.dll → binary scan · PlayfabAuthenticator.cs → direct parse<br>
+      Targets: AppIDRealtime · AppIDVoice · PlayFabSettings.TitleId</div>
+    </div>
+
+    <div id="file-list"></div>
+
+    <div class="controls">
+      <button id="scan-btn" disabled>Scan</button>
+      <button id="clear-btn">Clear</button>
+    </div>
+  </section>
+
+  <div id="progress-wrap" style="grid-column:1/-1"><div id="progress-bar"></div></div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-title">EXTRACTED IDS</span>
+      <span class="count-badge" id="result-count">0</span>
+    </div>
+    <div class="panel-body" id="results-body">
+      <div class="empty">Drop an APK or decompiled files to start.</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><span class="panel-title">SCAN LOG</span></div>
+    <div class="panel-body"><div id="log-output">
+      <span class="log-line info">— ready. supports .apk, Assembly-CSharp.dll, PlayfabAuthenticator.cs</span>
+    </div></div>
+  </section>
+</main>
+
+<footer>
+  <span>targets: AppIDRealtime · AppIDVoice · PlayFabSettings.TitleId</span>
+  <span>Unity 2021.3.x · 2022.3.x LTS · Mono backend</span>
+  <span>GTag / Gorilla Tag fork detection</span>
+</footer>
+
+<script>
+// ─── state ────────────────────────────────────────────────────────────────────
+const fileMap = new Map(); // key → { file, type }
+let resultCount = 0;
+
+// ─── patterns — exact field assignments from PlayfabAuthenticator.cs ──────────
+// Source lines look like:
+//   AppIDRealtime = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+//   AppIDVoice    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+//   PlayFabSettings.TitleId = "XXXX";
+//   PhotonNetwork.PhotonServerSettings.AppSettings.AppIdRealtime = "..."  (compiled variant)
+
+const PAT = {
+  realtime: [
+    /AppIDRealtime\s*=\s*"([0-9a-fA-F-]{36})"/gi,
+    /AppIdRealtime\s*=\s*"([0-9a-fA-F-]{36})"/gi,
+    /appIDRealtime\s*=\s*"([0-9a-fA-F-]{36})"/gi,
+  ],
+  voice: [
+    /AppIDVoice\s*=\s*"([0-9a-fA-F-]{36})"/gi,
+    /AppIdVoice\s*=\s*"([0-9a-fA-F-]{36})"/gi,
+    /appIDVoice\s*=\s*"([0-9a-fA-F-]{36})"/gi,
+  ],
+  playfab: [
+    /PlayFabSettings\.TitleId\s*=\s*"([^"]{2,20})"/gi,
+    /TitleId\s*=\s*"([A-F0-9]{4,8})"/gi,
+    /titleId\s*=\s*"([A-F0-9]{4,8})"/gi,
+  ],
+};
+
+// UUID pattern for binary dll scan fallback
+const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+const TITLEID_RE = /\b[A-F0-9]{4,8}\b/g;
+
+// Anchor strings that appear near the IDs in compiled IL (Assembly-CSharp.dll string table)
+const REALTIME_ANCHORS = ['PlayfabAuthenticator', 'AppIDRealtime', 'AppIdRealtime', 'Realtime', 'PhotonNetwork'];
+const VOICE_ANCHORS    = ['AppIDVoice', 'AppIdVoice', 'Voice'];
+const PLAYFAB_ANCHORS  = ['PlayFabSettings', 'TitleId', 'titleId', 'PlayfabAuthenticator'];
+
+// ─── DOM ──────────────────────────────────────────────────────────────────────
+const dropTarget   = document.getElementById('drop-target');
+const fileInput    = document.getElementById('file-input');
+const fileList     = document.getElementById('file-list');
+const scanBtn      = document.getElementById('scan-btn');
+const clearBtn     = document.getElementById('clear-btn');
+const resultsBody  = document.getElementById('results-body');
+const logOutput    = document.getElementById('log-output');
+const resultCountEl= document.getElementById('result-count');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar  = document.getElementById('progress-bar');
+
+// ─── drag-drop ────────────────────────────────────────────────────────────────
+dropTarget.addEventListener('dragover', e => { e.preventDefault(); dropTarget.classList.add('drag-over'); });
+dropTarget.addEventListener('dragleave', () => dropTarget.classList.remove('drag-over'));
+dropTarget.addEventListener('drop', e => { e.preventDefault(); dropTarget.classList.remove('drag-over'); addFiles([...e.dataTransfer.files]); });
+fileInput.addEventListener('change', () => { addFiles([...fileInput.files]); fileInput.value = ''; });
+clearBtn.addEventListener('click', () => { fileMap.clear(); renderChips(); scanBtn.disabled = true; });
+
+function guessType(name) {
+  const n = name.toLowerCase();
+  if (n.endsWith('.apk')) return 'apk';
+  if (n.endsWith('.dll')) return 'dll';
+  if (n.endsWith('.cs'))  return 'cs';
+  return 'other';
+}
+
+function addFiles(newFiles) {
+  newFiles.forEach(f => {
+    const t = guessType(f.name);
+    // accept apk, dll, cs — and any text file that might be PlayfabAuthenticator
+    if (!['apk','dll','cs','other'].includes(t)) return;
+    fileMap.set(f.name, { file: f, type: t });
+  });
+  renderChips();
+  scanBtn.disabled = fileMap.size === 0;
+}
+
+function renderChips() {
+  fileList.innerHTML = '';
+  fileMap.forEach(({ file, type }, name) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = `<span class="chip-type ${type}">${type.toUpperCase()}</span><span>${name}</span><button class="chip-remove" data-name="${name}">×</button>`;
+    fileList.appendChild(chip);
+  });
+  fileList.querySelectorAll('.chip-remove').forEach(btn => {
+    btn.addEventListener('click', () => { fileMap.delete(btn.dataset.name); renderChips(); scanBtn.disabled = fileMap.size === 0; });
+  });
+}
+
+// ─── logging ──────────────────────────────────────────────────────────────────
+function log(msg, cls = 'info') {
+  const s = document.createElement('span');
+  s.className = `log-line ${cls}`;
+  s.textContent = msg;
+  logOutput.appendChild(s);
+  logOutput.parentElement.scrollTop = logOutput.parentElement.scrollHeight;
+}
+function clearLog() { logOutput.innerHTML = ''; }
+
+// ─── scan entry ───────────────────────────────────────────────────────────────
+scanBtn.addEventListener('click', runScan);
+
+async function runScan() {
+  clearLog();
+  resultsBody.innerHTML = '';
+  resultCount = 0;
+  updateCount();
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+  scanBtn.disabled = true;
+
+  const entries = [...fileMap.entries()];
+  log(`scanning ${entries.length} file(s)...`, 'info');
+
+  for (let i = 0; i < entries.length; i++) {
+    const [name, { file, type }] = entries[i];
+    progressBar.style.width = `${Math.round((i / entries.length) * 100)}%`;
+
+    try {
+      if (type === 'apk') {
+        log(`→ ${name}  [APK — unpacking]`, 'info');
+        await scanApk(file);
+      } else if (type === 'dll') {
+        log(`→ ${name}  [DLL — binary scan]`, 'info');
+        const buf = await file.arrayBuffer();
+        await scanDll(buf, name);
+      } else {
+        // .cs or other text — check if it's PlayfabAuthenticator
+        log(`→ ${name}  [text scan]`, 'info');
+        const text = await file.text();
+        scanText(text, name, 'cs');
+      }
+    } catch(e) {
+      log(`  error: ${e.message}`, 'err');
+    }
+  }
+
+  progressBar.style.width = '100%';
+  setTimeout(() => { progressWrap.style.display = 'none'; }, 500);
+
+  if (resultCount === 0) {
+    resultsBody.innerHTML = '<div class="empty">No IDs found.<br>If APK: confirm it\'s a Unity Mono build (not IL2CPP).<br>If folder: include Assembly-CSharp.dll or PlayfabAuthenticator.cs.</div>';
+    log('scan complete — 0 results.', 'warn');
+  } else {
+    log(`scan complete — ${resultCount} result card(s).`, 'ok');
+  }
+  scanBtn.disabled = false;
+}
+
+// ─── APK handler ──────────────────────────────────────────────────────────────
+async function scanApk(file) {
+  let zip;
+  try { zip = await JSZip.loadAsync(file); }
+  catch(e) { log('  APK unzip failed — not a valid zip/apk', 'err'); return; }
+
+  const entries = Object.keys(zip.files);
+  log(`  APK contains ${entries.length} entries`, 'info');
+
+  // Priority 1: look for PlayfabAuthenticator.cs (rare but possible in some exports)
+  const csFiles = entries.filter(e => e.toLowerCase().includes('playfabauthenticator') && e.endsWith('.cs'));
+  for (const path of csFiles) {
+    log(`  found source: ${path}`, 'ok');
+    const text = await zip.files[path].async('text');
+    scanText(text, path, 'cs');
+  }
+
+  // Priority 2: Assembly-CSharp.dll (standard Unity Mono APK location)
+  // Unity APK structure: assets/bin/Data/Managed/Assembly-CSharp.dll
+  const dllPaths = entries.filter(e =>
+    e.toLowerCase().includes('assembly-csharp') && e.endsWith('.dll')
+  );
+
+  if (dllPaths.length === 0) {
+    // Also check for any managed dll containing photon/playfab
+    const otherDlls = entries.filter(e =>
+      e.endsWith('.dll') && e.includes('Managed') &&
+      (e.toLowerCase().includes('photon') || e.toLowerCase().includes('playfab'))
+    );
+    dllPaths.push(...otherDlls);
+  }
+
+  if (dllPaths.length === 0) {
+    log('  no Assembly-CSharp.dll found — may be IL2CPP build', 'warn');
+    log('  IL2CPP: run il2cppdumper on libil2cpp.so + global-metadata.dat first', 'warn');
+    return;
+  }
+
+  for (const path of dllPaths) {
+    log(`  extracting: ${path}`, 'info');
+    const buf = await zip.files[path].async('arraybuffer');
+    await scanDll(buf, path);
+  }
+}
+
+// ─── DLL binary scan ──────────────────────────────────────────────────────────
+async function scanDll(buf, sourceName) {
+  const bytes   = new Uint8Array(buf);
+  const strings = extractStrings(bytes, 3);
+  log(`  pulled ${strings.length} string runs from binary`, 'info');
+
+  // First pass: look for the actual assignment text surviving in string table
+  // Unity Mono CIL embeds ldstr operands verbatim — the values are there,
+  // but field names may or may not survive depending on strip level.
+  // Strategy: find UUID strings anchored near Photon field names, and
+  // TitleId values anchored near PlayFab field names.
+
+  const realtimeAnchorIdx = buildAnchorIdx(strings, REALTIME_ANCHORS);
+  const voiceAnchorIdx    = buildAnchorIdx(strings, VOICE_ANCHORS);
+  const playfabAnchorIdx  = buildAnchorIdx(strings, PLAYFAB_ANCHORS);
+
+  const WINDOW = 50; // string slots proximity window
+
+  let realtime = null, voice = null, playfab = null;
+
+  // Collect all UUIDs and TitleId candidates with anchor proximity scores
+  const uuidCandidates = [];
+  const titleCandidates = [];
+
+  strings.forEach((s, idx) => {
+    // UUID shaped?
+    const uuids = [...s.matchAll(UUID_RE)];
+    uuids.forEach(m => {
+      const val = m[0];
+      const rScore = realtimeAnchorIdx.reduce((best, ai) => Math.min(best, Math.abs(ai-idx)), Infinity);
+      const vScore = voiceAnchorIdx.reduce((best, ai) => Math.min(best, Math.abs(ai-idx)), Infinity);
+      uuidCandidates.push({ val, idx, rScore, vScore });
+    });
+
+    // TitleId shaped (4-8 uppercase hex, anchored near PlayFab strings)
+    const nearPlayfab = playfabAnchorIdx.some(ai => Math.abs(ai-idx) <= WINDOW);
+    if (nearPlayfab) {
+      const tids = [...s.matchAll(TITLEID_RE)];
+      tids.forEach(m => {
+        const val = m[0];
+        const pScore = playfabAnchorIdx.reduce((best, ai) => Math.min(best, Math.abs(ai-idx)), Infinity);
+        titleCandidates.push({ val, idx, pScore });
+      });
+    }
+  });
+
+  // Assign: best-scoring UUID near realtime anchors → realtime
+  //         second best or next-nearest voice anchor → voice
+  // Sort by realtime proximity
+  uuidCandidates.sort((a,b) => a.rScore - b.rScore);
+  const seenUUIDs = new Set();
+  for (const c of uuidCandidates) {
+    if (seenUUIDs.has(c.val)) continue;
+    seenUUIDs.add(c.val);
+    if (!realtime && c.rScore < WINDOW) { realtime = c.val; continue; }
+    if (!voice && c.vScore < WINDOW)    { voice = c.val; continue; }
+    if (!realtime) realtime = c.val; // fallback: first UUID
+    if (!voice && c.val !== realtime) voice = c.val;
+  }
+
+  // Best TitleId candidate
+  titleCandidates.sort((a,b) => a.pScore - b.pScore);
+  if (titleCandidates.length > 0) playfab = titleCandidates[0].val;
+
+  if (!realtime && !voice && !playfab) {
+    // Last resort: raw regex over the entire byte stream decoded as latin-1
+    const latin = decodeLatin1(bytes);
+    const fullText = latin;
+    const allUUIDs = [...fullText.matchAll(UUID_RE)].map(m => m[0]);
+    const uniq = [...new Set(allUUIDs)];
+    if (uniq[0]) realtime = uniq[0];
+    if (uniq[1]) voice    = uniq[1];
+    const allTIDs = [...fullText.matchAll(/PlayFabSettings\.TitleId\s*=\s*"([^"]{2,20})"/gi)];
+    if (allTIDs[0]) playfab = allTIDs[0][1];
+    if (realtime || playfab) log('  using latin-1 fallback scan (low strip level)', 'warn');
+  }
+
+  emitCard({ realtime, voice, playfab }, sourceName, 'dll');
+}
+
+// ─── text / CS scan ───────────────────────────────────────────────────────────
+function scanText(text, sourceName, srcType) {
+  // Check this is a PlayfabAuthenticator file
+  const isAuth = text.includes('PlayfabAuthenticator') || text.includes('PlayFabAuthenticator') ||
+                 text.includes('AppIDRealtime') || text.includes('AppIdRealtime') ||
+                 text.includes('PlayFabSettings');
+
+  if (!isAuth) {
+    log(`  skipped — not a PlayfabAuthenticator file`, 'warn');
+    return;
+  }
+
+  log(`  PlayfabAuthenticator confirmed`, 'ok');
+
+  let realtime = null, voice = null, playfab = null;
+
+  // Realtime
+  for (const re of PAT.realtime) {
+    re.lastIndex = 0;
+    const m = re.exec(text);
+    if (m) { realtime = m[1]; break; }
+  }
+  // Voice
+  for (const re of PAT.voice) {
+    re.lastIndex = 0;
+    const m = re.exec(text);
+    if (m) { voice = m[1]; break; }
+  }
+  // PlayFab
+  for (const re of PAT.playfab) {
+    re.lastIndex = 0;
+    const m = re.exec(text);
+    if (m) { playfab = m[1]; break; }
+  }
+
+  if (realtime) log(`  AppIDRealtime  → ${realtime}`, 'hit');
+  else          log(`  AppIDRealtime  → not found`, 'warn');
+  if (voice)    log(`  AppIDVoice     → ${voice}`, 'hit');
+  else          log(`  AppIDVoice     → not found`, 'warn');
+  if (playfab)  log(`  PlayFab TitleId→ ${playfab}`, 'hit');
+  else          log(`  PlayFab TitleId→ not found`, 'warn');
+
+  emitCard({ realtime, voice, playfab }, sourceName, srcType);
+}
+
+// ─── result card ──────────────────────────────────────────────────────────────
+function emitCard({ realtime, voice, playfab }, sourceName, srcType) {
+  if (!realtime && !voice && !playfab) {
+    log(`  no target IDs extracted from ${sourceName}`, 'warn');
+    return;
+  }
+
+  resultCount++;
+  updateCount();
+
+  const card = document.createElement('div');
+  card.className = 'result-card';
+
+  const srcLabel = sourceName.split('/').pop().split('\\').pop();
+
+  card.innerHTML = `
+    <div class="result-source">
+      <span class="src-tag ${srcType}">${srcType.toUpperCase()}</span>${srcLabel}
+    </div>
+    ${idRow('AppIDRealtime', realtime, 'realtime')}
+    ${idRow('AppIDVoice',    voice,    'voice')}
+    ${idRow('PlayFab TitleId', playfab, 'playfab')}
+  `;
+
+  // wire copy buttons
+  card.querySelectorAll('.copy-btn[data-val]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      navigator.clipboard.writeText(this.dataset.val).then(() => {
+        this.textContent = 'copied';
+        this.classList.add('copied');
+        setTimeout(() => { this.textContent = 'copy'; this.classList.remove('copied'); }, 1500);
+      });
+    });
+  });
+
+  if (resultsBody.querySelector('.empty')) resultsBody.innerHTML = '';
+  resultsBody.appendChild(card);
+}
+
+function idRow(label, val, cls) {
+  if (val) {
+    return `<div class="id-row">
+      <span class="id-label">${label}</span>
+      <span class="id-value ${cls}">${val}</span>
+      <button class="copy-btn" data-val="${val}">copy</button>
+    </div>`;
+  }
+  return `<div class="id-row">
+    <span class="id-label">${label}</span>
+    <span class="id-value notfound">not found</span>
+  </div>`;
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+function extractStrings(bytes, minLen) {
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b >= 0x20 && b < 0x7F) { cur += String.fromCharCode(b); }
+    else { if (cur.length >= minLen) out.push(cur); cur = ''; }
+  }
+  if (cur.length >= minLen) out.push(cur);
+  return out;
+}
+
+function buildAnchorIdx(strings, anchors) {
+  const idx = [];
+  strings.forEach((s, i) => { if (anchors.some(a => s.includes(a))) idx.push(i); });
+  return idx;
+}
+
+function decodeLatin1(bytes) {
+  // chunk to avoid call stack limit on large files
+  const CHUNK = 65536;
+  let out = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return out;
+}
+
+function updateCount() {
+  resultCountEl.textContent = resultCount;
+  resultCountEl.className = 'count-badge' + (resultCount > 0 ? ' has-results' : '');
+}
+</script>
+</body>
+</html>
